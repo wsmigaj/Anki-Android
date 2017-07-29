@@ -361,6 +361,9 @@ public class Sched {
         try {
             LinkedList<Long> activeDecks = mCol.getDecks().active();
             cache.cacheDeckIds(activeDecks);
+            // count cards in each active deck (with limits not yet applied)
+            HashMap<Long, Integer> counts =
+                    (HashMap<Long, Integer>)cntFn.invoke(Sched.this, activeDecks);
 
             // for each of the active decks
             for (long did : activeDecks) {
@@ -381,7 +384,7 @@ public class Sched {
                     lim = Math.min(pcounts.get(id), lim);
                 }
                 // see how many cards we actually have
-                int cnt = (Integer)cntFn.invoke(Sched.this, did, lim);
+                int cnt = Math.min(counts.get(did), lim);
                 // if non-zero, decrement from parents counts
                 for (JSONObject p : parents) {
                     long id = p.getLong("id");
@@ -409,6 +412,44 @@ public class Sched {
         }
         return parents;
     }
+
+
+    /**
+     * For each specified desk, count its member cards fulfilling a given condition.
+     * @param deskIds   List of IDs of the desks of interest.
+     * @param condition Condition to be fulfilled by the counted cards (an SQL expression).
+     * @return Mapping from desk IDs to card counts.
+     */
+    private HashMap<Long, Integer> getCardCounts(List<Long> deskIds, String condition) {
+        String deskIdsAsString = android.text.TextUtils.join(",", deskIds);
+        Cursor cur = null;
+        try {
+            String query = "SELECT did, COUNT(did) FROM cards WHERE did IN(" + deskIdsAsString + ")";
+            if (condition != null && !condition.isEmpty()) {
+                query += " AND " + condition;
+            }
+            query += " GROUP BY did";
+
+            cur = mCol.getDb().getDatabase().rawQuery(query,null);
+            HashMap<Long, Integer> counts = new HashMap<>();
+            while (cur.moveToNext()) {
+                long did = cur.getLong(0);
+                int count = cur.getInt(1);
+                counts.put(did, count);
+            }
+            for (Long did : deskIds) {
+                if (!counts.containsKey(did)) {
+                    counts.put(did, 0);
+                }
+            }
+            return counts;
+        } finally {
+            if (cur != null) {
+                cur.close();
+            }
+        }
+    }
+
 
     /**
      * Deck list **************************************************************** *******************************
@@ -604,18 +645,16 @@ public class Sched {
     private void _resetNewCount() {
         try {
             mNewCount = _walkingCount(Sched.class.getDeclaredMethod("_deckNewLimitSingle", JSONObject.class),
-                    Sched.class.getDeclaredMethod("_cntFnNew", long.class, int.class));
+                    Sched.class.getDeclaredMethod("_cntFnNew", List.class));
         } catch (NoSuchMethodException e) {
             throw new RuntimeException(e);
         }
     }
 
-
     // Used as an argument for _walkingCount() in _resetNewCount() above
     @SuppressWarnings("unused")
-    private int _cntFnNew(long did, int lim) {
-        return mCol.getDb().queryScalar(
-                "SELECT count() FROM (SELECT 1 FROM cards WHERE did = " + did + " AND queue = 0 LIMIT " + lim + ")");
+    private HashMap<Long, Integer> _cntFnNew(List<Long> deskIds) {
+        return getCardCounts(deskIds, "queue = 0");
     }
 
 
@@ -1264,7 +1303,7 @@ public class Sched {
     private void _resetRevCount() {
         try {
             mRevCount = _walkingCount(Sched.class.getDeclaredMethod("_deckRevLimitSingle", JSONObject.class),
-                    Sched.class.getDeclaredMethod("_cntFnRev", long.class, int.class));
+                    Sched.class.getDeclaredMethod("_cntFnRev", List.class));
         } catch (NoSuchMethodException e) {
             throw new RuntimeException(e);
         }
@@ -1273,10 +1312,8 @@ public class Sched {
 
     // Dynamically invoked in _walkingCount, passed as a parameter in _resetRevCount
     @SuppressWarnings("unused")
-    private int _cntFnRev(long did, int lim) {
-        return mCol.getDb().queryScalar(
-                "SELECT count() FROM (SELECT id FROM cards WHERE did = " + did + " AND queue = 2 and due <= " + mToday
-                        + " LIMIT " + lim + ")");
+    private HashMap<Long, Integer> _cntFnRev(List<Long> deskIds) {
+        return getCardCounts(deskIds, "queue = 2 AND due <= " + mToday);
     }
 
 
