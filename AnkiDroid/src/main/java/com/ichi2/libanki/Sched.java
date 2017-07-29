@@ -331,19 +331,46 @@ public class Sched {
     }
 
 
+    private class DeckIdCache
+    {
+        private HashMap<String, Long> mIds = new HashMap<>();
+
+        public void cacheDeckIds(List<Long> ids)
+        {
+            for (long id : ids) {
+                mIds.put(mCol.getDecks().name(id), id);
+            }
+        }
+
+        public long getDeckId(String name)
+        {
+            Long id = mIds.get(name);
+            if (id == null) {
+                id = mCol.getDecks().id(name);
+                mIds.put(name, id);
+            }
+            return id;
+        }
+    }
+
+
     private int _walkingCount(Method limFn, Method cntFn) {
         int tot = 0;
+        DeckIdCache cache = new DeckIdCache();
         HashMap<Long, Integer> pcounts = new HashMap<>();
-        // for each of the active decks
         try {
-            for (long did : mCol.getDecks().active()) {
+            LinkedList<Long> activeDecks = mCol.getDecks().active();
+            cache.cacheDeckIds(activeDecks);
+
+            // for each of the active decks
+            for (long did : activeDecks) {
                 // get the individual deck's limit
                 int lim = (Integer)limFn.invoke(Sched.this, mCol.getDecks().get(did));
                 if (lim == 0) {
                     continue;
                 }
-                // check the parents
-                List<JSONObject> parents = mCol.getDecks().parents(did);
+                // check the parents' limits
+                List<JSONObject> parents = getDeckParents(did, cache);
                 for (JSONObject p : parents) {
                     // add if missing
                     long id = p.getLong("id");
@@ -371,6 +398,17 @@ public class Sched {
         return tot;
     }
 
+
+    private List<JSONObject> getDeckParents(long did, DeckIdCache cache)
+    {
+        List<String> parentNames = mCol.getDecks().parentNames(did);
+        List<JSONObject> parents = new ArrayList<>();
+        for (String name : parentNames)
+        {
+            parents.add(mCol.getDecks().get(cache.getDeckId(name)));
+        }
+        return parents;
+    }
 
     /**
      * Deck list **************************************************************** *******************************
