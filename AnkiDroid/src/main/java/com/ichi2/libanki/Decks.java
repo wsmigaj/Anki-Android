@@ -942,6 +942,21 @@ public class Decks {
      */
     public List<JSONObject> parents(long did) {
         // get parent and grandparent names
+        List<String> parents = parentNames(did);
+        // convert to objects
+        List<JSONObject> oParents = new ArrayList<>();
+        for (int i = 0; i < parents.size(); i++) {
+            oParents.add(i, get(id(parents.get(i))));
+        }
+        return oParents;
+    }
+
+
+    /**
+     * Names of all parents of did.
+     */
+    public List<String> parentNames(long did) {
+        // get parent and grandparent names
         List<String> parents = new ArrayList<>();
         try {
             List<String> parts = Arrays.asList(get(did).getString("name").split("::", -1));
@@ -952,12 +967,7 @@ public class Decks {
                     parents.add(parents.get(parents.size() - 1) + "::" + part);
                 }
             }
-            // convert to objects
-            List<JSONObject> oParents = new ArrayList<>();
-            for (int i = 0; i < parents.size(); i++) {
-                oParents.add(i, get(id(parents.get(i))));
-            }
-            return oParents;
+            return parents;
         } catch (JSONException e) {
             throw new RuntimeException(e);
         }
