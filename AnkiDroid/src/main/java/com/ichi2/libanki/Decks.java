@@ -959,7 +959,7 @@ public class Decks {
         // get parent and grandparent names
         List<String> parents = new ArrayList<>();
         try {
-            List<String> parts = Arrays.asList(get(did).getString("name").split("::", -1));
+            List<String> parts = splitDeckName(get(did).getString("name"));
             for (String part : parts.subList(0, parts.size() - 1)) {
                 if (parents.size() == 0) {
                     parents.add(part);
@@ -971,6 +971,23 @@ public class Decks {
         } catch (JSONException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    /** Return the list of parts of a deck name separated by "::". */
+    public static List<String> splitDeckName(final String name)
+    {
+        final String separator = "::";
+
+        ArrayList<String> parts = new ArrayList<>();
+        int fromIndex = 0;
+        int separatorPos = -1;
+        while ((separatorPos = name.indexOf(separator, fromIndex)) != -1) {
+            parts.add(name.substring(fromIndex, separatorPos));
+            fromIndex = separatorPos + separator.length();
+        }
+
+        parts.add(name.substring(fromIndex));
+        return parts;
     }
 
 
