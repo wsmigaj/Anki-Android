@@ -48,6 +48,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.ListIterator;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Random;
 
 import timber.log.Timber;
@@ -415,16 +416,22 @@ public class Sched {
 
 
     /**
-     * For each specified desk, count its member cards fulfilling a given condition.
+     * For each specified desk, count cards fulfilling a specified condition.
      * @param deskIds   List of IDs of the desks of interest.
-     * @param condition Condition to be fulfilled by the counted cards (an SQL expression).
+     * @param function  Integer-valued function to evaluate to count cards; typically "COUNT(1)".
+     * @param condition Condition to be fulfilled by the counted cards; for example, "queue = 2".
+     * @param limit     Maximum card count per deck. This value will replace any counts larger than it.
      * @return Mapping from desk IDs to card counts.
      */
-    private HashMap<Long, Integer> _getCardCounts(List<Long> deskIds, String condition) {
+    private HashMap<Long, Integer> _getCardCounts(List<Long> deskIds, String function, String condition, int limit) {
+        if( limit < 0) {
+            throw new IllegalArgumentException("'limit' must be non-negative");
+        }
+
         String deskIdsAsString = android.text.TextUtils.join(",", deskIds);
         Cursor cur = null;
         try {
-            String query = "SELECT did, COUNT(did) FROM cards WHERE did IN(" + deskIdsAsString + ")";
+            String query = "SELECT did, " + function + " FROM cards WHERE did IN(" + deskIdsAsString + ")";
             if (condition != null && !condition.isEmpty()) {
                 query += " AND " + condition;
             }
@@ -435,7 +442,7 @@ public class Sched {
             while (cur.moveToNext()) {
                 long did = cur.getLong(0);
                 int count = cur.getInt(1);
-                counts.put(did, count);
+                counts.put(did, Math.min(count, limit));
             }
             for (Long did : deskIds) {
                 if (!counts.containsKey(did)) {
@@ -450,10 +457,28 @@ public class Sched {
         }
     }
 
+    /** Equivalent to the other overload with function = "COUNT(1)" and limit = Integer.MAX_VALUE. */
+    private HashMap<Long, Integer> _getCardCounts(List<Long> deskIds, String condition) {
+        return _getCardCounts(deskIds, "COUNT(1)", condition, Integer.MAX_VALUE);
+    }
+
 
     /**
      * Deck list **************************************************************** *******************************
      */
+
+
+    private static class DeckLimits
+    {
+        public final int newCardLimit;
+        public final int revCardLimit;
+
+        public DeckLimits(int newCardLimit_, int revCardLimit_)
+        {
+            newCardLimit = newCardLimit_;
+            revCardLimit = revCardLimit_;
+        }
+    }
 
 
     /**
@@ -463,52 +488,65 @@ public class Sched {
         _checkDay();
         mCol.getDecks().recoverOrphans();
         ArrayList<JSONObject> decks = mCol.getDecks().allSorted();
-        HashMap<String, Integer[]> lims = new HashMap<>();
-        ArrayList<DeckDueTreeNode> data = new ArrayList<>();
+        HashMap<String, DeckLimits> lims = new HashMap<>();
         try {
+            ArrayList<Long> deckIds = new ArrayList<>();
             for (JSONObject deck : decks) {
+                final String name = deck.getString("name");
+                final long id = deck.getLong("id");
+
                 // if we've already seen the exact same deck name, remove the
                 // invalid duplicate and reload
-                if (lims.containsKey(deck.getString("name"))) {
-                    mCol.getDecks().rem(deck.getLong("id"), false, true);
+                if (lims.containsKey(name)) {
+                    mCol.getDecks().rem(id, false, true);
                     return deckDueList();
                 }
-                String p;
-                List<String> parts = Arrays.asList(deck.getString("name").split("::", -1));
-                if (parts.size() < 2) {
-                    p = null;
-                } else {
-                    parts = parts.subList(0, parts.size() - 1);
-                    p = TextUtils.join("::", parts);
-                }
+
+                deckIds.add(id);
+
+                String p = Decks.parentNameOrNull(name);
+
+                // Evaluate and save card limits for this deck.
                 // new
                 int nlim = _deckNewLimitSingle(deck);
                 if (!TextUtils.isEmpty(p)) {
                     if (!lims.containsKey(p)) {
                         // if parent was missing, this deck is invalid, and we need to reload the deck list
-                        mCol.getDecks().rem(deck.getLong("id"), false, true);
+                        mCol.getDecks().rem(id, false, true);
                         return deckDueList();
                     }
-                    nlim = Math.min(nlim, lims.get(p)[0]);
+                    nlim = Math.min(nlim, lims.get(p).newCardLimit);
                 }
-                int _new = _newForDeck(deck.getLong("id"), nlim);
-                // learning
-                int lrn = _lrnForDeck(deck.getLong("id"));
                 // reviews
                 int rlim = _deckRevLimitSingle(deck);
                 if (!TextUtils.isEmpty(p)) {
-                    rlim = Math.min(rlim, lims.get(p)[1]);
+                    rlim = Math.min(rlim, lims.get(p).revCardLimit);
                 }
-                int rev = _revForDeck(deck.getLong("id"), rlim);
-                // save to list
-                data.add(new DeckDueTreeNode(deck.getString("name"), deck.getLong("id"), rev, lrn, _new));
                 // add deck as a parent
-                lims.put(deck.getString("name"), new Integer[]{nlim, rlim});
+                lims.put(name, new DeckLimits(nlim, rlim));
             }
+
+            HashMap<Long, Integer> newCounts = _newCardCounts(deckIds);
+            HashMap<Long, Integer> lrnCounts = _lrnCardCounts(deckIds);
+            HashMap<Long, Integer> revCounts = _revCardCounts(deckIds);
+
+            ArrayList<DeckDueTreeNode> data = new ArrayList<>();
+            for (JSONObject deck : decks) {
+                final String name = deck.getString("name");
+                final long id = deck.getLong("id");
+
+                DeckLimits deckLimits = lims.get(name);
+
+                int new_ = Math.min(newCounts.get(id), deckLimits.newCardLimit);
+                int lrn = lrnCounts.get(id);
+                int rev = Math.min(revCounts.get(id), deckLimits.revCardLimit);
+                // save to list
+                data.add(new DeckDueTreeNode(name, id, rev, lrn, new_));
+            }
+            return data;
         } catch (JSONException e) {
             throw new RuntimeException(e);
         }
-        return data;
     }
 
 
@@ -798,13 +836,9 @@ public class Sched {
     }
 
 
-    /* New count for a single deck. */
-    public int _newForDeck(long did, int lim) {
-    	if (lim == 0) {
-    		return 0;
-    	}
-    	lim = Math.min(lim, mReportLimit);
-    	return mCol.getDb().queryScalar("SELECT count() FROM (SELECT 1 FROM cards WHERE did = " + did + " AND queue = 0 LIMIT " + lim + ")");
+    private HashMap<Long, Integer> _newCardCounts(List<Long> deskIds)
+    {
+        return _getCardCounts(deskIds, "COUNT(1)", "queue = 0", mReportLimit);
     }
 
 
@@ -1252,19 +1286,32 @@ public class Sched {
     }
 
 
-    private int _lrnForDeck(long did) {
+    private HashMap<Long, Integer> _lrnCardCounts(List<Long> deskIds)
+    {
+        int collapseTime;
         try {
-            int cnt = mCol.getDb().queryScalar(
-                    "SELECT sum(left / 1000) FROM (SELECT left FROM cards WHERE did = " + did
-                            + " AND queue = 1 AND due < " + (Utils.intNow() + mCol.getConf().getInt("collapseTime"))
-                            + " LIMIT " + mReportLimit + ")");
-            return cnt + mCol.getDb().queryScalar(
-                    "SELECT count() FROM (SELECT 1 FROM cards WHERE did = " + did
-                            + " AND queue = 3 AND due <= " + mToday
-                            + " LIMIT " + mReportLimit + ")");
-        } catch (SQLException | JSONException e) {
+            collapseTime = mCol.getConf().getInt("collapseTime");
+        } catch (JSONException e) {
             throw new RuntimeException(e);
         }
+
+        HashMap<Long, Integer> counts = _getCardCounts(
+                deskIds,
+                "SUM(left / 1000)",
+                "queue = 1 AND due < " + (Utils.intNow() + collapseTime),
+                mReportLimit);
+        HashMap<Long, Integer> counts2 = _getCardCounts(
+                deskIds,
+                "COUNT(1)",
+                "queue = 3 AND due <= " + mToday,
+                mReportLimit);
+
+        for (Map.Entry<Long, Integer> kv : counts.entrySet())
+        {
+            kv.setValue(kv.getValue() + counts2.get(kv.getKey()));
+        }
+
+        return counts;
     }
 
 
@@ -1294,9 +1341,9 @@ public class Sched {
     }
 
 
-    public int _revForDeck(long did, int lim) {
-    	lim = Math.min(lim, mReportLimit);
-    	return mCol.getDb().queryScalar("SELECT count() FROM (SELECT 1 FROM cards WHERE did = " + did + " AND queue = 2 AND due <= " + mToday + " LIMIT " + lim + ")");
+    private HashMap<Long, Integer> _revCardCounts(List<Long> deskIds)
+    {
+        return _getCardCounts(deskIds, "COUNT(1)", "queue = 2 AND due <= " + mToday, mReportLimit);
     }
 
 

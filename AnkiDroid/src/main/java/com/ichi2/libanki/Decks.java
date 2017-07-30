@@ -990,6 +990,22 @@ public class Decks {
         return parts;
     }
 
+    /**
+     * Return the name of the parent deck of the deck called 'name',
+     * or null if this deck has no parent.
+     */
+    public static String parentNameOrNull(final String name)
+    {
+        int index = name.lastIndexOf("::");
+        if (index >= 0)
+        {
+            return name.substring(0, index);
+        }
+        else
+        {
+            return null;
+        }
+    }
 
     /**
      * Sync handling
