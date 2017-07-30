@@ -974,7 +974,7 @@ public class Decks {
     }
 
     /** Return the list of parts of a deck name separated by "::". */
-    public static List<String> splitDeckName(final String name)
+    public static ArrayList<String> splitDeckName(final String name)
     {
         final String separator = "::";
 

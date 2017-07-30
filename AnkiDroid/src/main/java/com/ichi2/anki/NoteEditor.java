@@ -70,6 +70,7 @@ import com.ichi2.anki.servicelayer.NoteService;
 import com.ichi2.async.DeckTask;
 import com.ichi2.libanki.Card;
 import com.ichi2.libanki.Collection;
+import com.ichi2.libanki.Decks;
 import com.ichi2.libanki.Note;
 import com.ichi2.libanki.Utils;
 import com.ichi2.themes.StyledProgressDialog;
@@ -1532,23 +1533,23 @@ public class NoteEditor extends AnkiActivity {
     public class JSONNameComparator implements Comparator<JSONObject> {
         @Override
         public int compare(JSONObject lhs, JSONObject rhs) {
-            String[] o1;
-            String[] o2;
+            ArrayList<String> o1;
+            ArrayList<String> o2;
             try {
-                o1 = lhs.getString("name").split("::");
-                o2 = rhs.getString("name").split("::");
+                o1 = Decks.splitDeckName(lhs.getString("name"));
+                o2 = Decks.splitDeckName(rhs.getString("name"));
             } catch (JSONException e) {
                 throw new RuntimeException(e);
             }
-            for (int i = 0; i < Math.min(o1.length, o2.length); i++) {
-                int result = o1[i].compareToIgnoreCase(o2[i]);
+            for (int i = 0; i < Math.min(o1.size(), o2.size()); i++) {
+                int result = o1.get(i).compareToIgnoreCase(o2.get(i));
                 if (result != 0) {
                     return result;
                 }
             }
-            if (o1.length < o2.length) {
+            if (o1.size() < o2.size()) {
                 return -1;
-            } else if (o1.length > o2.length) {
+            } else if (o1.size() > o2.size()) {
                 return 1;
             } else {
                 return 0;
