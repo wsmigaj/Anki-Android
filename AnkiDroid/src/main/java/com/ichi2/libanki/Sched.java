@@ -373,7 +373,7 @@ public class Sched {
                     continue;
                 }
                 // check the parents' limits
-                List<JSONObject> parents = getDeckParents(did, cache);
+                List<JSONObject> parents = _getDeckParents(did, cache);
                 for (JSONObject p : parents) {
                     // add if missing
                     long id = p.getLong("id");
@@ -402,7 +402,7 @@ public class Sched {
     }
 
 
-    private List<JSONObject> getDeckParents(long did, DeckIdCache cache)
+    private List<JSONObject> _getDeckParents(long did, DeckIdCache cache)
     {
         List<String> parentNames = mCol.getDecks().parentNames(did);
         List<JSONObject> parents = new ArrayList<>();
@@ -420,7 +420,7 @@ public class Sched {
      * @param condition Condition to be fulfilled by the counted cards (an SQL expression).
      * @return Mapping from desk IDs to card counts.
      */
-    private HashMap<Long, Integer> getCardCounts(List<Long> deskIds, String condition) {
+    private HashMap<Long, Integer> _getCardCounts(List<Long> deskIds, String condition) {
         String deskIdsAsString = android.text.TextUtils.join(",", deskIds);
         Cursor cur = null;
         try {
@@ -654,7 +654,7 @@ public class Sched {
     // Used as an argument for _walkingCount() in _resetNewCount() above
     @SuppressWarnings("unused")
     private HashMap<Long, Integer> _cntFnNew(List<Long> deskIds) {
-        return getCardCounts(deskIds, "queue = 0");
+        return _getCardCounts(deskIds, "queue = 0");
     }
 
 
@@ -1313,7 +1313,7 @@ public class Sched {
     // Dynamically invoked in _walkingCount, passed as a parameter in _resetRevCount
     @SuppressWarnings("unused")
     private HashMap<Long, Integer> _cntFnRev(List<Long> deskIds) {
-        return getCardCounts(deskIds, "queue = 2 AND due <= " + mToday);
+        return _getCardCounts(deskIds, "queue = 2 AND due <= " + mToday);
     }
 
 
