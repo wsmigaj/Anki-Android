@@ -21,7 +21,6 @@ package com.ichi2.libanki;
 import android.app.Activity;
 import android.content.Context;
 import android.database.Cursor;
-import android.database.SQLException;
 import android.database.sqlite.SQLiteConstraintException;
 import android.graphics.Typeface;
 import android.text.SpannableStringBuilder;
@@ -90,6 +89,8 @@ public class Sched {
     private LinkedList<Long> mNewDids;
     private LinkedList<Long> mLrnDids;
     private LinkedList<Long> mRevDids;
+
+    private DeckIdCache mDeckIdCache;
 
     // Not in libanki
     private WeakReference<Activity> mContextReference;
@@ -699,6 +700,8 @@ public class Sched {
     private void _resetNew() {
         _resetNewCount();
         mNewDids = new LinkedList<>(mCol.getDecks().active());
+        mDeckIdCache = new DeckIdCache();
+        mDeckIdCache.cacheDeckIds(mNewDids);
         mNewQueue.clear();
         _updateNewCardRatio();
     }
@@ -711,9 +714,15 @@ public class Sched {
         if (mNewCount == 0) {
             return false;
         }
+        Method deckNewLimitSingle;
+        try {
+            deckNewLimitSingle = Sched.class.getDeclaredMethod("_deckNewLimitSingle", JSONObject.class);
+        } catch (NoSuchMethodException e) {
+            throw new RuntimeException(e);
+        }
         while (!mNewDids.isEmpty()) {
             long did = mNewDids.getFirst();
-            int lim = Math.min(mQueueLimit, _deckNewLimit(did));
+            int lim = Math.min(mQueueLimit, _deckLimit(did, deckNewLimitSingle));
             Cursor cur = null;
             if (lim != 0) {
                 mNewQueue.clear();
@@ -806,17 +815,9 @@ public class Sched {
     }
 
 
-    private int _deckNewLimit(long did) {
-        return _deckNewLimit(did, null);
-    }
-
-
-    private int _deckNewLimit(long did, Method fn) {
+    private int _deckLimit(long did, Method fn) {
         try {
-            if (fn == null) {
-                fn = Sched.class.getDeclaredMethod("_deckNewLimitSingle", JSONObject.class);
-            }
-            List<JSONObject> decks = mCol.getDecks().parents(did);
+            List<JSONObject> decks = _getDeckParents(did, mDeckIdCache);
             decks.add(mCol.getDecks().get(did));
             int lim = -1;
             // for the deck and each of its parents
@@ -830,7 +831,7 @@ public class Sched {
                 }
             }
             return lim;
-        } catch (IllegalArgumentException | NoSuchMethodException | InvocationTargetException | IllegalAccessException e) {
+        } catch (IllegalArgumentException | InvocationTargetException | IllegalAccessException e) {
             throw new RuntimeException(e);
         }
     }
@@ -866,12 +867,12 @@ public class Sched {
     private void _resetLrnCount() {
         // sub-day
         mLrnCount = mCol.getDb().queryScalar(
-                "SELECT sum(left / 1000) FROM (SELECT left FROM cards WHERE did IN " + _deckLimit()
+                "SELECT sum(left / 1000) FROM (SELECT left FROM cards WHERE did IN " + _activeDecksAsString()
                 + " AND queue = 1 AND due < " + mDayCutoff + " LIMIT " + mReportLimit + ")");
 
         // day
         mLrnCount += mCol.getDb().queryScalar(
-                "SELECT count() FROM cards WHERE did IN " + _deckLimit() + " AND queue = 3 AND due <= " + mToday
+                "SELECT count() FROM cards WHERE did IN " + _activeDecksAsString() + " AND queue = 3 AND due <= " + mToday
                         + " LIMIT " + mReportLimit);
     }
 
@@ -899,7 +900,7 @@ public class Sched {
                     .getDb()
                     .getDatabase()
                     .rawQuery(
-                            "SELECT due, id FROM cards WHERE did IN " + _deckLimit() + " AND queue = 1 AND due < "
+                            "SELECT due, id FROM cards WHERE did IN " + _activeDecksAsString() + " AND queue = 1 AND due < "
                                     + mDayCutoff + " LIMIT " + mReportLimit, null);
             while (cur.moveToNext()) {
                 mLrnQueue.add(new long[] { cur.getLong(0), cur.getLong(1) });
@@ -1321,7 +1322,7 @@ public class Sched {
 
     private int _deckRevLimit(long did) {
         try {
-            return _deckNewLimit(did, Sched.class.getDeclaredMethod("_deckRevLimitSingle", JSONObject.class));
+            return _deckLimit(did, Sched.class.getDeclaredMethod("_deckRevLimitSingle", JSONObject.class));
         } catch (NoSuchMethodException e) {
             throw new RuntimeException(e);
         }
@@ -1368,6 +1369,8 @@ public class Sched {
         _resetRevCount();
         mRevQueue.clear();
         mRevDids = mCol.getDecks().active();
+        mDeckIdCache = new DeckIdCache();
+        mDeckIdCache.cacheDeckIds(mRevDids);
     }
 
 
@@ -1939,7 +1942,7 @@ public class Sched {
     }
 
 
-    public String _deckLimit() {
+    public String _activeDecksAsString() {
         return Utils.ids2str(mCol.getDecks().active());
     }
 
@@ -2062,14 +2065,14 @@ public class Sched {
     public boolean revDue() {
         return mCol.getDb()
                 .queryScalar(
-                        "SELECT 1 FROM cards WHERE did IN " + _deckLimit() + " AND queue = 2 AND due <= " + mToday
+                        "SELECT 1 FROM cards WHERE did IN " + _activeDecksAsString() + " AND queue = 2 AND due <= " + mToday
                                 + " LIMIT 1") != 0;
     }
 
 
     /** true if there are any new cards due. */
     public boolean newDue() {
-        return mCol.getDb().queryScalar("SELECT 1 FROM cards WHERE did IN " + _deckLimit() + " AND queue = 0 LIMIT 1") != 0;
+        return mCol.getDb().queryScalar("SELECT 1 FROM cards WHERE did IN " + _activeDecksAsString() + " AND queue = 0 LIMIT 1") != 0;
     }
 
 
@@ -2492,7 +2495,7 @@ public class Sched {
      */
 
     public int cardCount() {
-        String dids = _deckLimit();
+        String dids = _activeDecksAsString();
         return mCol.getDb().queryScalar("SELECT count() FROM cards WHERE did IN " + dids);
     }
 

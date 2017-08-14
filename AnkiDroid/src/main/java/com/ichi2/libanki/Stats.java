@@ -1215,7 +1215,7 @@ public class Stats {
             }
             return Utils.ids2str(Utils.arrayList2array(ids));
         } else {
-            return mCol.getSched()._deckLimit();
+            return mCol.getSched()._activeDecksAsString();
         }
     }
 
